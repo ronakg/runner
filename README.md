@@ -77,6 +77,58 @@ The following attributes are maintained by the library for each job:
   - `outFile`: The path to the file where output of the job is written to. File path is of the
   format `/tmp/runner/<job-id>`.
 
+##### Public interfaces
+
+The following public interfaces are exposed by the library package.
+
+```go
+
+// JobConfig represents the input configuration for a job
+type JobConfig struct {
+  Path string
+  Args []string
+  Timeout time.Duration
+}
+
+// Job represents a job
+//
+// TODO: Think about exposing an interface rather than the Job struct itself. Provides flexibility
+// to the user during testing.
+type Job struct {
+}
+
+func NewJob(c Config) (*Job, error) {}
+
+// Start starts a newly created job
+func (j *Job) Start() error {}
+
+// Stop stops a running job
+func (j *Job) Stop() error {}
+
+type JobStatus int
+const (
+  // StatusUnknown is returned when the status of the job cannot be determined
+  StatusUnknown JobStatus = iota
+  // StatusRunning is returned when the job is still running
+  StatusRunning
+  // StatusCompleted is returned when the job runs to its completion itself
+  StatusCompleted
+  // StatusStopped is returned when the job is stopped by the user
+  StatusStopped
+  // StatusKilled is returned when the timeout expires and the job is killed
+  StatusKilled
+)
+func (j *Job) Status() (JobStatus, error) {}
+
+// Line represents a single line of output from the job. Using a struct here provides flexibility to
+// include metadata about the line in the future while keeping the package backward compatible.
+// e.g. timestamp or where the line was captured from - stdout vs stderr.
+type Line struct {
+  Bytes []byte
+}
+func (j *Job) Output() (<-chan *Line, error) {}
+```
+
 Some important considerations for the library:
   - State of all the jobs are only maintained in-memory. This information is not persisted anywhere.
   - Library allows concurrent access to the jobs. Multiple goroutines may perform operations
@@ -123,7 +175,7 @@ action.
 
   - `path`: The path to the command that should be executed
   - `args`: The arguments to be passed to the command
-  - `timeout`: Timeout in seconds
+  - `timeout`: Timeout in seconds. Timeout is optional, defaults to 0 when not provided.
 
 If the job is started successfully by the server, a job id is returned to the client in response.
 This job id is required to perform subsequent operations on the job.
@@ -135,8 +187,8 @@ The `stop` action is used to stop a job. It takes only a single parameter called
 #### `status`
 
 The `status` action is used to fetch status of a previously created job. It takes only a single
-parameter called `job_id`. Status of a job can be `Unknown`, `Running`, `Stopped` or `Killed`. If
-the job was stopped because of the timeout expiry, it's status is considered `Killed`.  
+parameter called `job_id`. Status of a job can be `Unknown`, `Running`, `Completed`, `Stopped` or
+`Killed`. If the job was stopped because of the timeout expiry, it's status is considered `Killed`.
 
 #### `output`
 
@@ -175,3 +227,5 @@ configured on the server -
 The job id is used as the means to authorize the client. A client must provide the job id in order
 to perform an operation on the job. It is up to the client to ensure that the id returned in
 response to the `start` request is stored securely.
+
+TODO: Expand on the authorization scheme.

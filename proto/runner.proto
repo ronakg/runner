@@ -26,8 +26,9 @@ message StopResponse {
 enum JobStatus {
     UNKNOWN = 0;                    // job status unknown
     RUNNING = 1;                    // job is running
-    STOPPED = 2;                    // job is stopped
-    KILLED = 3;                     // job was killed because timeout expired
+    COMPLETED = 2;                  // job was completed
+    STOPPED = 3;                    // job was stopped by the client
+    KILLED = 4;                     // job was killed because timeout expired
 }
 
 message StatusRequest {
