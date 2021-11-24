@@ -69,6 +69,7 @@ A job has the following attributes that are provided by the user of the library:
   - `timeout`: Timeout duration in seconds to wait for the job to complete. If the job doesn't
   complete within the specified timeout, the job will be stopped by the library. A timeout of 0
   seconds is interpreted as no timeout.
+  - `profile`: The resource profile to be applied to the job. Only 1 profile is supported - `default`.
 
 The following attributes are maintained by the library for each job:
   - `id`: The unique identifier of the job. It is generated automatically by the library upon job
@@ -82,33 +83,20 @@ The following attributes are maintained by the library for each job:
 The following public interfaces are exposed by the library package.
 
 ```go
-
 // JobConfig represents the input configuration for a job
 type JobConfig struct {
-  Path string
-  Args []string
+  Path    string
+  Args    []string
   Timeout time.Duration
+  Profile string
 }
-
-// Job represents a job
-//
-// TODO: Think about exposing an interface rather than the Job struct itself. Provides flexibility
-// to the user during testing.
-type Job struct {
-}
-
-func NewJob(c Config) (*Job, error) {}
-
-// Start starts a newly created job
-func (j *Job) Start() error {}
-
-// Stop stops a running job
-func (j *Job) Stop() error {}
 
 type JobStatus int
 const (
   // StatusUnknown is returned when the status of the job cannot be determined
   StatusUnknown JobStatus = iota
+  // StatusCreated is returned when job is created but not yet started
+  StatusCreated
   // StatusRunning is returned when the job is still running
   StatusRunning
   // StatusCompleted is returned when the job runs to its completion itself
@@ -118,7 +106,6 @@ const (
   // StatusKilled is returned when the timeout expires and the job is killed
   StatusKilled
 )
-func (j *Job) Status() (JobStatus, error) {}
 
 // Line represents a single line of output from the job. Using a struct here provides flexibility to
 // include metadata about the line in the future while keeping the package backward compatible.
@@ -126,7 +113,29 @@ func (j *Job) Status() (JobStatus, error) {}
 type Line struct {
   Bytes []byte
 }
-func (j *Job) Output() (<-chan *Line, error) {}
+
+// Job represents the interface containing operations that can be performed on the job
+type Job interface {
+  // ID returns the job id
+  ID() string
+  Start() error
+  Stop() error
+  Status() (JobStatus, error)
+  Output() (<-chan *Line, error)
+}
+
+// NewJob creates and returns a new Job
+func NewJob(c Config) (Job, error) {}
+
+// job defines the actual job type that complies with the Job interface
+type job struct {
+}
+
+func (j *job) ID() string {}
+func (j *job) Start() error {}
+func (j *job) Stop() error {}
+func (j *job) Status() (JobStatus, error) {}
+func (j *job) Output() (<-chan *Line, error) {}
 ```
 
 Some important considerations for the library:
@@ -138,15 +147,18 @@ Some important considerations for the library:
 
 #### Job Resource Limitation 
 
-Each job created using the library is resource limited using cgroups v2. cgroup name for all the
-jobs is called `runner`.
+Each job created using the library is resource limited using cgroups. The library combines all the
+resource control limitations of a job into a profile that defines what limits should be applied for
+cpu, memory and disk IO for the job. At the moment, only 1 profile called `default` is supported by
+the library.
 
-As mentioned in the requirements section, library limits access to 3 resources for each job - cpu,
-memory and disk IO. Library limits each job's resources by adding the job's PID to the `runner`
-cgroup -
-  - `/sys/fs/cgroup/cpu/runner/cgroup.procs`
-  - `/sys/fs/cgroup/memory/runner/cgroup.procs`
-  - `/sys/fs/cgroup/blkio/runner/cgroup.procs`
+A new cgroup is created for each resource profile. Naming convention for the resource profile is
+`runner-<profile_name>`.
+
+Example cgroup `procs` files for `runner-default` profile -
+  - `/sys/fs/cgroup/cpu/runner-default/cgroup.procs`
+  - `/sys/fs/cgroup/memory/runner-default/cgroup.procs`
+  - `/sys/fs/cgroup/blkio/runner-default/cgroup.procs`
 
 TODO: Decide the actual limits for cpu, memory and blkio.
 
@@ -175,7 +187,8 @@ action.
 
   - `path`: The path to the command that should be executed
   - `args`: The arguments to be passed to the command
-  - `timeout`: Timeout in seconds. Timeout is optional, defaults to 0 when not provided.
+  - `timeout`: (Optional) Timeout in seconds. Defaults to 0 when not provided.
+  - `profile`: (Optional) Resource profile. `default` profile is applied when not provided.
 
 If the job is started successfully by the server, a job id is returned to the client in response.
 This job id is required to perform subsequent operations on the job.
@@ -208,6 +221,7 @@ Parameters for generating Root CA and certificates -
   - 2048 bytes long key
   - AES256 key encryption using a password
   - SHA256 as digest algorithm for signing requests
+  - `Subject Common Name` is mandatory for the client certificate
 
 Server is configured with TLS 1.2 as the minimum required version. The following ciphers are
 configured on the server -
@@ -224,8 +238,8 @@ configured on the server -
 
 ### Authorization
 
-The job id is used as the means to authorize the client. A client must provide the job id in order
-to perform an operation on the job. It is up to the client to ensure that the id returned in
-response to the `start` request is stored securely.
-
-TODO: Expand on the authorization scheme.
+As mTLS is used for authentication, the server can identify the client using the `Subject Common
+Name` field in the client certificate. When a job is started by a client, its `CN` from the client
+certificate is stored as the ownership identifier for the job by the server. The server will verify
+the `CN` from the client certificate for subsequence operations on the job to make sure that same
+client is accessing the job.

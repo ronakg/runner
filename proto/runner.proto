@@ -8,6 +8,7 @@ message StartRequest {
     string path = 1;                // path to the command
     repeated string args = 2;       // arguments to the command
     int32 timeout = 3;              // timeout in seconds
+    string profile = 4;             // resource profile for the job
 }
 
 message StartResponse {
