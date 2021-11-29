@@ -1,8 +1,6 @@
 syntax = "proto3";
 
-option go_package = "github.com/ronakg/runner/proto";
-
-package runner.proto;
+option go_package = "github.com/ronakg/runner/proto;proto";
 
 message StartRequest {
     string path = 1;                // path to the command
@@ -38,7 +36,8 @@ message StatusRequest {
 
 message StatusResponse {
     JobStatus status = 1;           // status of the job
-    int32 exit_code = 2;            // exit code of the job - only applicable when status is STOPPED
+    int32 exit_code = 2;            // exit code of the job
+                                    // only applicable for terminal statuses - completed, stopped and killed
 }
 
 message OutputRequest {
@@ -46,7 +45,7 @@ message OutputRequest {
 }
 
 message OutputResponse {
-    string line = 1;                // 1 line from the output
+    bytes buffer = 1;               // a buffer containing output bytes
 }
 
 service runner {

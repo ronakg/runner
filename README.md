@@ -107,10 +107,10 @@ const (
   StatusKilled
 )
 
-// Line represents a single line of output from the job. Using a struct here provides flexibility to
-// include metadata about the line in the future while keeping the package backward compatible.
-// e.g. timestamp or where the line was captured from - stdout vs stderr.
-type Line struct {
+// Output defines the structure for output bytes from a job. Using a struct here provides
+// flexibility to include metadata about the line in the future while keeping the package backward
+// compatible.  e.g. timestamp or where the output was captured from - stdout vs stderr.
+type Output struct {
   Bytes []byte
 }
 
@@ -118,24 +118,28 @@ type Line struct {
 type Job interface {
   // ID returns the job id
   ID() string
+
+  // Start starts a newly created job
   Start() error
-  Stop() error
-  Status() (JobStatus, error)
-  Output() (<-chan *Line, error)
+
+  // Stop stops a running job
+  Stop()
+
+  // Status returns current JobStatus and an exit code in case the job has terminated
+  Status() (JobStatus, int)
+
+  // Output returns an out channel from which the output of a job can be consumed. The cancel
+  // function can be used to stop streaming output from the job. Once cancel function is invoked,
+  // the out channel is closed.
+  Output() (out <-chan *Output, cancel func(), err error)
 }
 
 // NewJob creates and returns a new Job
 func NewJob(c Config) (Job, error) {}
 
-// job defines the actual job type that complies with the Job interface
+// job implements the Job interface
 type job struct {
 }
-
-func (j *job) ID() string {}
-func (j *job) Start() error {}
-func (j *job) Stop() error {}
-func (j *job) Status() (JobStatus, error) {}
-func (j *job) Output() (<-chan *Line, error) {}
 ```
 
 Some important considerations for the library:
@@ -144,6 +148,20 @@ Some important considerations for the library:
   simultaneously on the job.
   - A job that has been stopped cannot be started again. A new job has to be created with same input
   parameters for rerun of the job.
+
+#### Job Execution
+
+- Start: An [exec Cmd with Context](https://pkg.go.dev/os/exec#CommandContext) is used to start a
+  job. The type of context used for the `Cmd` depends on the timeout supplied by the user. When the
+  timeout is set to a valid duration, a [Context with Timeout](https://pkg.go.dev/context#WithTimeout)
+  is used. When the timeout is set to 0 (which is same as no timeout), [Context with
+  Cancel](https://pkg.go.dev/context#WithCancel) is used.
+
+  Once a job is started successfully, the PID of the job is added to the cgroup created for the job's profile.
+
+- Stop: The  `cancel` function of a job's context is used to stop the job. Once a job is terminated
+  either on its own or through a `stop` action - the PID of the job is removed from the cgroup
+  created for the job's profile.
 
 #### Job Resource Limitation 
 
