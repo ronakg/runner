@@ -76,7 +76,7 @@ The following attributes are maintained by the library for each job:
   - `status`: The status of the job.
   - `exitCode`: The exit code of the job.
   - `outFile`: The path to the file where output of the job is written to. File path is of the
-  format `/tmp/runner/<job-id>`.
+  format `/tmp/runner/<job_id>.out`.
 
 ##### Public interfaces
 
@@ -93,12 +93,8 @@ type JobConfig struct {
 
 type JobStatus int
 const (
-  // StatusUnknown is returned when the status of the job cannot be determined
-  StatusUnknown JobStatus = iota
-  // StatusCreated is returned when job is created but not yet started
-  StatusCreated
   // StatusRunning is returned when the job is still running
-  StatusRunning
+  StatusRunning Status = iota
   // StatusCompleted is returned when the job runs to its completion itself
   StatusCompleted
   // StatusStopped is returned when the job is stopped by the user
@@ -119,9 +115,6 @@ type Job interface {
   // ID returns the job id
   ID() string
 
-  // Start starts a newly created job
-  Start() error
-
   // Stop stops a running job
   Stop()
 
@@ -134,8 +127,8 @@ type Job interface {
   Output() (out <-chan *Output, cancel func(), err error)
 }
 
-// NewJob creates and returns a new Job
-func NewJob(c Config) (Job, error) {}
+// StartJob creates and starts a new job according to supplied JobConfig
+func StartJob(c JobConfig) (Job, error) {}
 
 // job implements the Job interface
 type job struct {
@@ -157,7 +150,10 @@ Some important considerations for the library:
   is used. When the timeout is set to 0 (which is same as no timeout), [Context with
   Cancel](https://pkg.go.dev/context#WithCancel) is used.
 
-  Once a job is started successfully, the PID of the job is added to the cgroup created for the job's profile.
+  `reexec` is used to set up the runtime process environment for the job before the command is run.
+  During the set up, appropriate control group will be applied to the process according to the
+  resource profile. This section will be updated once more implementation details have been worked
+  out.
 
 - Stop: The  `cancel` function of a job's context is used to stop the job. Once a job is terminated
   either on its own or through a `stop` action - the PID of the job is removed from the cgroup
