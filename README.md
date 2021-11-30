@@ -99,8 +99,8 @@ const (
   StatusCompleted
   // StatusStopped is returned when the job is stopped by the user
   StatusStopped
-  // StatusKilled is returned when the timeout expires and the job is killed
-  StatusKilled
+  // StatusTimedOut is returned when the timeout expires and the job is killed
+  StatusTimedOut
 )
 
 // Output defines the structure for output bytes from a job. Using a struct here provides
@@ -237,18 +237,12 @@ Parameters for generating Root CA and certificates -
   - SHA256 as digest algorithm for signing requests
   - `Subject Common Name` is mandatory for the client certificate
 
-Server is configured with TLS 1.2 as the minimum required version. The following ciphers are
+Server is configured with TLS 1.3 as the minimum required version. The following ciphers are
 configured on the server -
 
-  - `TLS_DHE_RSA_WITH_AES_256_CBC_SHA`
-  - `TLS_DHE_DSS_WITH_AES_256_CBC_SHA`
-  - `TLS_RSA_WITH_AES_256_CBC_SHA`
-  - `TLS_DHE_RSA_WITH_3DES_EDE_CBC_SHA`
-  - `TLS_DHE_DSS_WITH_3DES_EDE_CBC_SHA`
-  - `TLS_RSA_WITH_3DES_EDE_CBC_SHA`
-  - `TLS_DHE_RSA_WITH_AES_128_CBC_SHA`
-  - `TLS_DHE_DSS_WITH_AES_128_CBC_SHA`
-  - `TLS_RSA_WITH_AES_128_CBC_SHA`
+  - `TLS_AES_128_GCM_SHA256`
+  - `TLS_AES_256_GCM_SHA384`
+  - `TLS_CHACHA20_POLY1305_SHA256`
 
 ### Authorization
 

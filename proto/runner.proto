@@ -26,7 +26,7 @@ enum JobStatus {
     RUNNING = 0;                    // job is running
     COMPLETED = 1;                  // job was completed
     STOPPED = 2;                    // job was stopped by the client
-    KILLED = 3;                     // job was killed because timeout expired
+    TIMEDOUT = 3;                   // job was killed because timeout expired
 }
 
 message StatusRequest {
