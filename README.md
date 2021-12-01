@@ -63,9 +63,7 @@ start, stop jobs as well as check the status of and stream output from the exist
 #### Job Management
 
 A job has the following attributes that are provided by the user of the library:
-  - `path`: The path to the command/executable that needs to be executed as the job.
-  - `args`: Arguments to be passed to the command/executable.
-  creation. Client must provide the job id for subsequent operations on the job.
+  - `command`: The command (including its arguments) that needs to be executed as a job
   - `timeout`: Timeout duration in seconds to wait for the job to complete. If the job doesn't
   complete within the specified timeout, the job will be stopped by the library. A timeout of 0
   seconds is interpreted as no timeout.
@@ -85,8 +83,7 @@ The following public interfaces are exposed by the library package.
 ```go
 // JobConfig represents the input configuration for a job
 type JobConfig struct {
-  Path    string
-  Args    []string
+  Command string
   Timeout time.Duration
   Profile string
 }
@@ -141,6 +138,7 @@ Some important considerations for the library:
   simultaneously on the job.
   - A job that has been stopped cannot be started again. A new job has to be created with same input
   parameters for rerun of the job.
+  - `Output` returns combined output from `stdout` and `stderr` of the job.
 
 #### Job Execution
 
@@ -199,8 +197,7 @@ The following actions are available to the user of the client.
 The `start` action is used to start a new job. The following parameters are required for the `start`
 action.
 
-  - `path`: The path to the command that should be executed
-  - `args`: The arguments to be passed to the command
+  - `command`: Command that needs to be executed including its arguments.
   - `timeout`: (Optional) Timeout in seconds. Defaults to 0 when not provided.
   - `profile`: (Optional) Resource profile. `default` profile is applied when not provided.
 

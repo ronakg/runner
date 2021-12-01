@@ -3,10 +3,9 @@ syntax = "proto3";
 option go_package = "github.com/ronakg/runner/proto;proto";
 
 message StartRequest {
-    string path = 1;                // path to the command
-    repeated string args = 2;       // arguments to the command
-    int32 timeout = 3;              // timeout in seconds
-    string profile = 4;             // resource profile for the job
+    string command = 1;             // command including arguments to run
+    int32 timeout = 2;              // timeout in seconds
+    string profile = 3;             // resource profile for the job
 }
 
 message StartResponse {
