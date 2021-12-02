@@ -148,10 +148,11 @@ Some important considerations for the library:
   is used. When the timeout is set to 0 (which is same as no timeout), [Context with
   Cancel](https://pkg.go.dev/context#WithCancel) is used.
 
-  `reexec` is used to set up the runtime process environment for the job before the command is run.
+  The control groups defining resource limitation for the job are set up before the user's command
+  is executed.
   This is achieved by running the command via a specialized binary called `container`. The container
-  takes the resource profile and the command to run as arguments. `container` uses `reexec` to set
-  up cgroups controls for the profile before running the command.
+  takes the resource profile and the command to run as arguments. `container` sets up control groups
+  according to the profile parameters before spawning the command in a child process.
 
   The following diagram explains how processes are spawned.
 
@@ -161,8 +162,8 @@ Some important considerations for the library:
 |    |    |     +------------+
 | library | --> | container  |
 +---------+     |     |      |
-                | container  |     +---------+
-                | w/ cgroups | --> | command |
+                |  set up    |     +---------+
+                |  cgroups   | --> | command |
                 +------------+     +---------+
 ```
 
