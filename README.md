@@ -149,13 +149,24 @@ Some important considerations for the library:
   Cancel](https://pkg.go.dev/context#WithCancel) is used.
 
   `reexec` is used to set up the runtime process environment for the job before the command is run.
-  During the set up, appropriate control group will be applied to the process according to the
-  resource profile. This section will be updated once more implementation details have been worked
-  out.
+  This is achieved by running the command via a specialized binary called `container`. The container
+  takes the resource profile and the command to run as arguments. `container` uses `reexec` to set
+  up cgroups controls for the profile before running the command.
 
-- Stop: The  `cancel` function of a job's context is used to stop the job. Once a job is terminated
-  either on its own or through a `stop` action - the PID of the job is removed from the cgroup
-  created for the job's profile.
+  The following diagram explains how processes are spawned.
+
+```
++---------+
+| server  |
+|    |    |     +------------+
+| library | --> | container  |
++---------+     |     |      |
+                | container  |     +---------+
+                | w/ cgroups | --> | command |
+                +------------+     +---------+
+```
+
+- Stop: The `cancel` function of a job's context is used to stop the job.
 
 #### Job Resource Limitation 
 
@@ -164,15 +175,13 @@ resource control limitations of a job into a profile that defines what limits sh
 cpu, memory and disk IO for the job. At the moment, only 1 profile called `default` is supported by
 the library.
 
-A new cgroup is created for each resource profile. Naming convention for the resource profile is
-`runner-<profile_name>`.
+A new cgroup is created for each job. Naming convention for the cgroup for a job is
+`runner-<job_id>`.
 
-Example cgroup `procs` files for `runner-default` profile -
-  - `/sys/fs/cgroup/cpu/runner-default/cgroup.procs`
-  - `/sys/fs/cgroup/memory/runner-default/cgroup.procs`
-  - `/sys/fs/cgroup/blkio/runner-default/cgroup.procs`
-
-TODO: Decide the actual limits for cpu, memory and blkio.
+Example cgroup subsystem setup for a job with id `1234` -
+  - `/sys/fs/cgroup/cpu/runner-1234/`
+  - `/sys/fs/cgroup/memory/runner-1234/`
+  - `/sys/fs/cgroup/blkio/runner-1234/`
 
 #### Job Resource Isolation
 
