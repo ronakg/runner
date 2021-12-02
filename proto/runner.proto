@@ -1,0 +1,54 @@
+syntax = "proto3";
+
+option go_package = "github.com/ronakg/runner/proto;proto";
+
+message StartRequest {
+    string command = 1;             // command including arguments to run
+    int32 timeout = 2;              // timeout in seconds
+    string profile = 3;             // resource profile for the job
+}
+
+message StartResponse {
+    string job_id = 1;              // job id of the newly created job
+}
+
+message StopRequest {
+    string job_id = 1;              // job id to be stopped
+}
+
+message StopResponse {
+    JobStatus status = 1;           // status of the job
+    int32 exit_code = 2;            // exit code of the job
+}
+
+enum JobStatus {
+    RUNNING = 0;                    // job is running
+    COMPLETED = 1;                  // job was completed
+    STOPPED = 2;                    // job was stopped by the client
+    TIMEDOUT = 3;                   // job was killed because timeout expired
+}
+
+message StatusRequest {
+    string job_id = 1;              // job id
+}
+
+message StatusResponse {
+    JobStatus status = 1;           // status of the job
+    int32 exit_code = 2;            // exit code of the job
+                                    // only applicable for terminal statuses - completed, stopped and killed
+}
+
+message OutputRequest {
+    string job_id = 1;              // job id
+}
+
+message OutputResponse {
+    bytes buffer = 1;               // a buffer containing output bytes
+}
+
+service runner {
+    rpc Start(StartRequest) returns (StartResponse) {};
+    rpc Stop(StopRequest) returns (StopResponse) {};
+    rpc Status(StatusRequest) returns (StatusResponse) {};
+    rpc Output(OutputRequest) returns (stream OutputResponse) {};
+}
