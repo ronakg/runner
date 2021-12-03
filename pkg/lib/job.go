@@ -12,16 +12,15 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
 	"github.com/fsnotify/fsnotify"
-	"golang.org/x/net/context"
 )
 
 const (
-	outputBufSize  = 1024
-	outputChanSize = 64
+	outputBufSize = 1024
 )
 
 // TODO: These are global exported variables for now. They should be part of some sort library
@@ -30,37 +29,6 @@ var (
 	OutputDir     = "/tmp/runner"
 	ContainerPath = filepath.Join(OutputDir, "container")
 )
-
-// JobStatus represents status of a job
-type JobStatus int
-
-const (
-	// StatusCreated denotes a newly created job that's not yet started
-	StatusCreated JobStatus = iota - 1
-	// StatusRunning denotes a job that's in running state
-	StatusRunning
-	// StatusCompleted denotes a job that ran to its completion
-	StatusCompleted
-	// StatusStopped denotes a job that was stopped by the caller
-	StatusStopped
-	// StatusTimedOut denotes a job that was killed due to timeout expiration
-	StatusTimedOut
-)
-
-// JobStatusString returns string representation of Status
-func JobStatusString(s JobStatus) string {
-	switch s {
-	case StatusRunning:
-		return "RUNNING"
-	case StatusCompleted:
-		return "COMPLETED"
-	case StatusTimedOut:
-		return "TIMEDOUT"
-	case StatusStopped:
-		return "STOPPED"
-	}
-	return "UNKNOWN"
-}
 
 // ResProfile is the name of the resource profile that should be applied to the job
 type ResProfile string
@@ -102,16 +70,13 @@ type Job interface {
 type job struct {
 	config           JobConfig
 	id               string
-	outFile          string    // Path to the file where output is stored
-	status           JobStatus // Status of the job
-	exitCode         int       // Exit code of the job
+	outFile          string        // Path to the file where output is stored
+	status           safeJobStatus // Status of the job
+	exitCode         int32         // Exit code of the job
 	cmd              *exec.Cmd
-	ctx              context.Context    // ctx is a cancellation context used for Cmd cancellation
-	cancel           context.CancelFunc // cancel function associated with ctx
-	outputWriterDone chan struct{}      // channel to notify that outputWriter goroutine is done
-	stopOnce         sync.Once          // Used to make sure Stop is executed only once
-	sync.RWMutex                        // guards status
-	wg               sync.WaitGroup     // To make sure all goroutines come to stop
+	outputWriterDone chan struct{}  // channel to notify that outputWriter goroutine is done
+	stopOnce         sync.Once      // Used to make sure Stop is executed only once
+	wg               sync.WaitGroup // To make sure all goroutines come to stop
 }
 
 func init() {
@@ -122,11 +87,8 @@ func init() {
 }
 
 func (j *job) String() string {
-	j.RLock()
-	defer j.RUnlock()
-
 	return fmt.Sprintf("Job[id='%s', command='%s', status='%s']",
-		j.id, j.config.Command, JobStatusString(j.status))
+		j.id, j.config.Command, j.status.Get())
 }
 
 // StartJob starts a new job according to supplied JobConfig
@@ -144,20 +106,14 @@ func StartJob(config JobConfig) (Job, error) {
 		id:               id,
 		config:           config,
 		outFile:          filepath.Join(OutputDir, id+".out"),
-		status:           StatusRunning,
+		status:           safeJobStatus{value: StatusCreated},
+		exitCode:         -1,
 		outputWriterDone: make(chan struct{}),
 	}
 	debugLog("%s created", j)
 
-	if j.config.Timeout <= 0 {
-		// No timeout
-		j.ctx, j.cancel = context.WithCancel(context.Background())
-	} else {
-		j.ctx, j.cancel = context.WithTimeout(context.Background(), j.config.Timeout)
-	}
-
 	// Spawn the container process with command as the arguments
-	j.cmd = exec.CommandContext(j.ctx, ContainerPath, j.config.Command)
+	j.cmd = exec.Command(ContainerPath, j.config.Command)
 
 	// Make sure that child processes spawned from the Job belong to same process group
 	// This is to make sure that we can stop all the child processes as well in Stop()
@@ -192,6 +148,7 @@ func StartJob(config JobConfig) (Job, error) {
 		debugLog("Failed to start %s: %v", j, err)
 		return nil, err
 	}
+	j.status.Set(StatusRunning)
 
 	// Start waiter
 	j.wg.Add(1)
@@ -205,12 +162,12 @@ func (j *job) ID() string {
 	return j.id
 }
 
-// Stop stops the job
-func (j *job) Stop() {
-	// Make sure that Stop is executed only once, subsequent calls are no-op
+// kill kills all the processes spawned by the job including any child processes
+func (j *job) kill() {
+	// Make sure that we only kill the process once
 	j.stopOnce.Do(func() {
+		j.status.Set(StatusStopped)
 		debugLog("Stopping %s", j)
-		j.cancel()
 
 		// Just cancelling the context doesn't stop all child processes
 		// Passing a negative PID to the syscall sends a SIGKILL signal to all the child processes
@@ -219,24 +176,24 @@ func (j *job) Stop() {
 			debugLog("Failed to stop the job")
 		}
 	})
+}
+
+// Stop stops the job and waits for all the goroutines to finish processing
+func (j *job) Stop() {
+	debugLog("Stopping %s", j)
+	j.kill()
 	j.wg.Wait()
 }
 
 // Status returns the status of the job
 func (j *job) Status() (JobStatus, int) {
-	j.RLock()
-	defer j.RUnlock()
-
-	return j.status, j.exitCode
+	return j.status.Get(), int(atomic.LoadInt32(&j.exitCode))
 }
 
 // Output returns an out channel from which the output of a job can be consumed. The cancel
 // function can be used to stop streaming output from the job. Once cancel function is invoked,
 // the out channel is closed.
 func (j *job) Output() (<-chan *Output, func(), error) {
-	j.RLock()
-	defer j.RUnlock()
-
 	// cancelOnce is used to make sure that cancel() is executed only once
 	cancelOnce := sync.Once{}
 
@@ -261,7 +218,7 @@ func (j *job) Output() (<-chan *Output, func(), error) {
 	}
 
 	// out is the output channel that's returned to the caller
-	out := make(chan *Output, outputChanSize)
+	out := make(chan *Output)
 
 	// Set up a file watcher to monitor changes to j.outFile
 	watcher, err := j.outputWatcher()
@@ -282,11 +239,9 @@ func (j *job) Output() (<-chan *Output, func(), error) {
 
 		buf := make([]byte, outputBufSize)
 
-		// seekPos remembers the offset in j.outFile to read from
-		var seekPos int64 = 0
 		debugLog("Starting output for %s", j)
 		for {
-			n, err := f.ReadAt(buf, seekPos)
+			n, err := f.Read(buf)
 
 			// Caller already canceled
 			if outputCanceled() {
@@ -300,13 +255,7 @@ func (j *job) Output() (<-chan *Output, func(), error) {
 					Bytes: make([]byte, n),
 				}
 				copy(o.Bytes, buf)
-
-				// do not wait for a slow client
-				select {
-				case out <- o:
-				default:
-				}
-				seekPos += int64(n)
+				out <- o
 			}
 
 			if err != nil {
@@ -331,12 +280,9 @@ func (j *job) Output() (<-chan *Output, func(), error) {
 					debugLog("shutting down, error: %v", err)
 					return
 				}
-			case <-time.After(100 * time.Millisecond):
-				// If no event was received for 100 ms, check if the job is still running
-				status, _ := j.Status()
-				if status != StatusRunning {
-					return
-				}
+			case <-j.outputWriterDone:
+				// Job is done writing to the outFile, no need to read any more
+				return
 			}
 		}
 	}()
@@ -348,13 +294,14 @@ func (j *job) Output() (<-chan *Output, func(), error) {
 func (j *job) waiter() {
 	defer j.wg.Done()
 
-	debugLog("starting waiter for %s", j)
+	debugLog("Starting waiter for %s", j)
 
 	if j.config.Timeout > 0 {
 		select {
 		case <-time.After(j.config.Timeout):
-			// Stop the job if timeout expired
-			go j.Stop()
+			// kill the job if the timeout expired
+			j.kill()
+			j.status.Set(StatusTimedOut)
 		case <-j.outputWriterDone:
 			// outputWriter finished, which means that the job ran to its completion
 		}
@@ -371,7 +318,8 @@ func (j *job) waiter() {
 		debugLog("%s completed successfully", j)
 	}
 
-	j.updateStatus()
+	j.status.UpdateIf(StatusRunning, StatusCompleted)
+	atomic.StoreInt32(&j.exitCode, int32(j.cmd.ProcessState.ExitCode()))
 }
 
 // outputWriter reads data from the mr and writes the same to f
@@ -383,37 +331,14 @@ func (j *job) outputWriter(mr io.Reader, f *os.File) {
 
 	debugLog("Starting outputWriter for %s", j)
 
-	tr := io.TeeReader(mr, f)
-	buf := make([]byte, outputBufSize)
-	for {
-		_, err := tr.Read(buf)
-		if err != nil {
-			if !errors.Is(err, io.EOF) {
-				debugLog("Failed to read stdout or stderr: %v", err)
-			}
-			break
+	_, err := io.Copy(f, mr)
+	if err != nil {
+		if !errors.Is(err, io.EOF) {
+			debugLog("Failed to read stdout or stderr: %v", err)
 		}
 	}
 
-	debugLog("returning from outputWriter for %s", j)
-}
-
-// updateStatus updates the status of the job
-func (j *job) updateStatus() {
-	j.Lock()
-	defer j.Unlock()
-
-	ctxErr := j.ctx.Err()
-	if ctxErr != nil {
-		if errors.Is(ctxErr, context.Canceled) {
-			j.status = StatusStopped
-		} else if errors.Is(ctxErr, context.DeadlineExceeded) {
-			j.status = StatusTimedOut
-		}
-	} else {
-		j.status = StatusCompleted
-	}
-	j.exitCode = j.cmd.ProcessState.ExitCode()
+	debugLog("outputWriter done for %s", j)
 }
 
 // outputWatcher creates a Watcher for the outFile and returns the same

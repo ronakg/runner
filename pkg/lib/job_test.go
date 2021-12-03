@@ -68,13 +68,13 @@ func TestSimpleCommands(t *testing.T) {
 			output:   "bar\n",
 		},
 		{
-			name:     "invalid command",
-			command:  "invalid command",
+			name:     "failing command",
+			command:  "cat invalid_file",
 			nilErr:   true,
 			nilJob:   false,
 			status:   StatusCompleted,
-			exitCode: 127,
-			output:   "exit status 127\nsh: invalid: command not found\n",
+			exitCode: 1,
+			output:   "cat: invalid_file: No such file or directory\n",
 		},
 		{
 			name:    "blank command",
@@ -401,6 +401,49 @@ func TestStopDuringOutput(t *testing.T) {
 			assertStatus(t, j, StatusStopped, -1)
 		})
 	}
+}
+
+// TestConcurrentStops tests the scenario where Stop() is called multiple times from concurrent goroutines
+func TestConcurrentStops(t *testing.T) {
+	Debug = true
+	testCases := []struct {
+		name     string // test case name
+		command  string // command to run
+		numStops int    // number of times Stop should be called concurrently
+	}{
+		{
+			name:     "10 clients output cancellation",
+			numStops: 10,
+			command:  "for i in $(seq 1 10); do echo iteration $i; sleep 1; done",
+		},
+	}
+	for _, tc := range testCases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			c := JobConfig{
+				Command: tc.command,
+			}
+			j, err := StartJob(c)
+			require.NotNil(t, j)
+			require.Nil(t, err)
+
+			wg := sync.WaitGroup{}
+			for i := 0; i < tc.numStops; i++ {
+				wg.Add(1)
+				go func() {
+					defer wg.Done()
+					j.Stop()
+				}()
+			}
+			wg.Wait()
+
+			// Status
+			assertStatus(t, j, StatusStopped, -1)
+		})
+	}
+
 }
 
 // assertOutput is a convenience function to stream and verify a job's output

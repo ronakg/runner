@@ -1,9 +1,9 @@
 UT_COV=$(PWD)/cov.out
 
 GOCMD=go
-GOBUILD=$(GOCMD) build -v -trimpath
+GOBUILD=$(GOCMD) build -race -v -trimpath
 GOCLEAN=$(GOCMD) clean
-GOTEST=$(GOCMD) test -timeout 2m -v -count=1 -coverprofile=$(UT_COV) ./...
+GOTEST=$(GOCMD) test -race -timeout 2m -v -count=1 -coverprofile=$(UT_COV) ./...
 GOCOVER=$(GOCMD) tool cover
 GOFMT=gofmt -w
 GOVET=go vet
