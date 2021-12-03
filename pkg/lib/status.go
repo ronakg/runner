@@ -35,7 +35,7 @@ const (
 // safeJobStatus provides a safer way to use JobStatus protecting it with a lock
 type safeJobStatus struct {
 	value JobStatus
-	sync.Mutex
+	sync.RWMutex
 }
 
 // Set sets the JobStatus to new value
@@ -48,8 +48,8 @@ func (s *safeJobStatus) Set(new JobStatus) {
 
 // Get returns the current JobStatus
 func (s *safeJobStatus) Get() JobStatus {
-	s.Lock()
-	defer s.Unlock()
+	s.RLock()
+	defer s.RUnlock()
 
 	return s.value
 }

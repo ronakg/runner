@@ -173,7 +173,7 @@ func (j *job) kill() {
 		// Passing a negative PID to the syscall sends a SIGKILL signal to all the child processes
 		err := syscall.Kill(-j.cmd.Process.Pid, syscall.SIGKILL)
 		if err != nil {
-			debugLog("Failed to stop the job")
+			debugLog("Failed to stop the job: %v", err)
 		}
 	})
 }
@@ -185,40 +185,32 @@ func (j *job) Stop() {
 	j.wg.Wait()
 }
 
-// Status returns the status of the job
-func (j *job) Status() (JobStatus, int) {
+// Status returns the status of the job and the exit code.
+// Exit code is undefined if the status is StatusRunning.
+func (j *job) Status() (status JobStatus, exitCode int) {
 	return j.status.Get(), int(atomic.LoadInt32(&j.exitCode))
 }
 
 // Output returns an out channel from which the output of a job can be consumed. The cancel
 // function can be used to stop streaming output from the job. Once cancel function is invoked,
 // the out channel is closed.
-func (j *job) Output() (<-chan *Output, func(), error) {
+func (j *job) Output() (out <-chan *Output, cancel func(), err error) {
 	// cancelOnce is used to make sure that cancel() is executed only once
 	cancelOnce := sync.Once{}
 
 	// Channel to signal the cancellation by the caller to the goroutine writing to out channel
 	canceled := make(chan struct{})
 
-	// Convenience function to check if cancellation was triggered by the caller
-	outputCanceled := func() bool {
-		select {
-		case <-canceled:
-			return true
-		default:
-			return false
-		}
-	}
-
 	// cancel func that's returned to the user
-	cancel := func() {
+	cancel = func() {
+		debugLog("canceling output for %s", j)
 		cancelOnce.Do(func() {
 			close(canceled)
 		})
 	}
 
-	// out is the output channel that's returned to the caller
-	out := make(chan *Output)
+	// outChan is the output channel that's returned to the caller
+	outChan := make(chan *Output)
 
 	// Set up a file watcher to monitor changes to j.outFile
 	watcher, err := j.outputWatcher()
@@ -233,20 +225,23 @@ func (j *job) Output() (<-chan *Output, func(), error) {
 
 	// goroutine to read the j.outFile and send data to the out channel
 	go func() {
-		defer close(out)
-		defer f.Close()
-		defer watcher.Close()
+		defer close(outChan)
+		defer func() {
+			if err := f.Close(); err != nil {
+				debugLog("Failed to close %s: %v", j.outFile, err)
+			}
+		}()
+		defer func() {
+			if err := watcher.Close(); err != nil {
+				debugLog("Failed to close watcher for %s: %v", j.outFile, err)
+			}
+		}()
 
 		buf := make([]byte, outputBufSize)
 
 		debugLog("Starting output for %s", j)
 		for {
 			n, err := f.Read(buf)
-
-			// Caller already canceled
-			if outputCanceled() {
-				return
-			}
 
 			// n can be positive even in case of an error
 			// Send the read data to out channel
@@ -255,12 +250,12 @@ func (j *job) Output() (<-chan *Output, func(), error) {
 					Bytes: make([]byte, n),
 				}
 				copy(o.Bytes, buf)
-				out <- o
+				outChan <- o
 			}
 
 			if err != nil {
 				if !errors.Is(err, io.EOF) {
-					debugLog("Failed to read from file %s", j.outFile)
+					debugLog("Failed to read from file %s: %v", j.outFile, err)
 					return
 				}
 			} else {
@@ -280,6 +275,9 @@ func (j *job) Output() (<-chan *Output, func(), error) {
 					debugLog("shutting down, error: %v", err)
 					return
 				}
+			case <-canceled:
+				// output streaming canceled by the caller
+				return
 			case <-j.outputWriterDone:
 				// Job is done writing to the outFile, no need to read any more
 				return
@@ -287,7 +285,7 @@ func (j *job) Output() (<-chan *Output, func(), error) {
 		}
 	}()
 
-	return out, cancel, nil
+	return outChan, cancel, nil
 }
 
 // waiter waits for the job to complete
@@ -328,6 +326,11 @@ func (j *job) outputWriter(mr io.Reader, f *os.File) {
 
 	// Close outputWriterDone to signal completion of outputWriterDone
 	defer close(j.outputWriterDone)
+	defer func() {
+		if err := f.Close(); err != nil {
+			debugLog("Failed to close %s: %v", j.outFile, err)
+		}
+	}()
 
 	debugLog("Starting outputWriter for %s", j)
 
