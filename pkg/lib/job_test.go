@@ -287,18 +287,16 @@ func TestConcurrentOutput(t *testing.T) {
 func TestOutputCancellation(t *testing.T) {
 	Debug = true
 	testCases := []struct {
-		name            string        // test case name
-		command         string        // command to run
-		cancelWaitDur   time.Duration // duration to wait before cancelling output
-		numClients      int           // number of clients
-		cancelledOutput string        // output after output cancellation
+		name       string // test case name
+		command    string // command to run
+		numClients int    // number of clients
+		output     string // output after output cancellation
 	}{
 		{
-			name:            "10 clients output cancellation",
-			command:         "for i in $(seq 1 10); do echo iteration $i; sleep 1; done",
-			cancelWaitDur:   3 * time.Second,
-			numClients:      10,
-			cancelledOutput: "iteration 1\niteration 2\niteration 3\n",
+			name:       "10 clients output cancellation",
+			command:    "for i in $(seq 1 10); do echo iteration $i; sleep 1; done",
+			numClients: 10,
+			output:     "iteration 1\niteration 2\niteration 3\n",
 		},
 	}
 	for _, tc := range testCases {
@@ -325,25 +323,19 @@ func TestOutputCancellation(t *testing.T) {
 					out, cancel, err := j.Output()
 					require.Nil(t, err)
 
-					// Start a goroutine to cancel streaming after cancelWaitDur
-					wg.Add(1)
-					go func(i int, cancel func()) {
-						defer wg.Done()
-						<-time.After(tc.cancelWaitDur)
-						t.Logf("Cancelling output client %d", i+1)
-
-						// verify that calling cancel() multiple times is okay
-						cancel()
-						cancel()
-						cancel()
-					}(i, cancel)
-
 					// Start streaming output in this goroutine
 					output := make([]byte, 0)
 					for b := range out {
 						output = append(output, b.Bytes...)
+						// cancel output after we've received 3 iterations
+						if string(output) == tc.output {
+							// cancel multiple times to verify that subsequent cancellations are no-op
+							cancel()
+							cancel()
+							cancel()
+						}
 					}
-					assert.Equal(t, tc.cancelledOutput, string(output))
+					assert.Equal(t, tc.output, string(output))
 				}(i)
 			}
 			wg.Wait()
