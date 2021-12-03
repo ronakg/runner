@@ -8,13 +8,19 @@ GOCOVER=$(GOCMD) tool cover
 GOFMT=gofmt -w
 GOVET=go vet
 
+OS := $(shell uname -s)
+ifeq ($(OS),Darwin)
+	# https://github.com/golang/go/issues/49138#issuecomment-951401558
+	export MallocNanoZone=0
+endif
+
 format:
 	@echo ">>>> Formatting code..."
 	$(GOFMT) .
 	@echo "<<<< Done formatting code!"
 	@# Help: Auto-format source code
 
-lint: format
+lint: protogen format
 	@echo ">>>> Running static analysis..."
 	$(GOVET) ./...
 	@echo "<<<< Done running static analysis!"
