@@ -7,13 +7,13 @@ functional and design aspects of Runner.
 
 ### Library
 
-* [ ] A method to perform the following operations on a job
-    - [ ] Start
-    - [ ] Stop
-    - [ ] Query status
-    - [ ] Stream output
-* [ ] Output of a job should always be from the beginning of the job
-* [ ] Multiple clients should be able to concurrently retrieve output of a running job
+* [x] A method to perform the following operations on a job
+    - [x] Start
+    - [x] Stop
+    - [x] Query status
+    - [x] Stream output
+* [x] Output of a job should always be from the beginning of the job
+* [x] Multiple clients should be able to concurrently retrieve output of a running job
 * [ ] Resource control per job using cgroups
     - [ ] CPU
     - [ ] Memory
@@ -43,8 +43,8 @@ functional and design aspects of Runner.
 
 * [ ] Build script to perform the following operations
     - [ ] Build client and server binaries for Linux platform
-    - [ ] Run tests on the entire codebase
-    - [ ] Generate code coverage report
+    - [x] Run tests on the entire codebase
+    - [x] Generate code coverage report
 
 
 ## Design

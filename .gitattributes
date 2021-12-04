@@ -1,0 +1,5 @@
+# Vendored path
+go.sum linguist-generated linguist-vendored
+
+# Better diffs
+*.go diff=golang
