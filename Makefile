@@ -7,6 +7,7 @@ GOTEST=$(GOCMD) test -race -timeout 2m -v -count=1 -coverprofile=$(UT_COV) ./...
 GOCOVER=$(GOCMD) tool cover
 GOFMT=gofmt -w
 GOVET=go vet
+RUNNER_HOME=/tmp/runner
 
 OS := $(shell uname -s)
 ifeq ($(OS),Darwin)
@@ -37,17 +38,21 @@ protogen:
 	@echo "<<<< Done running protobuf bindings generation!"
 	@# Help: Generate protobuf bindings
 
-container:
-	@echo ">>>> Running container build and install..."
-	mkdir -p /tmp/runner
-	cd pkg/lib/container && \
-		$(GOBUILD) && \
-		cp container /tmp/runner/
-	@echo "<<<< Done installing container!"
-	@# Help: Build and install container
+rootfs:
+	@echo ">>>> Setting up root filesystem..."
+	rm -rf $(RUNNER_HOME)/rootfs && \
+		mkdir -p $(RUNNER_HOME)/rootfs && \
+		tar -xzf resources/alpine-minirootfs-3.15.0-x86_64.tar.gz -C $(RUNNER_HOME)/rootfs/
+	@echo "<<<< Done settings up root filesystem!"
+	@# Help: Set up root filesystem
 
+clean:
+	@echo ">>>> Cleaning everything up..."
+	rm -rf $(RUNNER_HOME)
+	@echo "<<<< Done cleaning up!"
+	@# Help: Clean everythinggg
 
-test: lint protogen container
+test: lint protogen rootfs
 	@echo ">>>> Testing $(PWD)..."
 	$(GOTEST)
 	@echo "<<<< Done testing!"
