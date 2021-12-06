@@ -3,17 +3,29 @@ UT_COV=$(PWD)/cov.out
 GOCMD=go
 GOBUILD=$(GOCMD) build -race -v -trimpath
 GOCLEAN=$(GOCMD) clean
-GOTEST=$(GOCMD) test -race -timeout 2m -v -count=1 -coverprofile=$(UT_COV) ./...
+GOTEST=$(GOCMD) test -race -timeout 2m -v -count=1 -coverprofile=$(UT_COV)
 GOCOVER=$(GOCMD) tool cover
 GOFMT=gofmt -w
 GOVET=go vet
 RUNNER_HOME=/tmp/runner
+CERTS_DIR=$(RUNNER_HOME)/certs
 
 OS := $(shell uname -s)
 ifeq ($(OS),Darwin)
 	# https://github.com/golang/go/issues/49138#issuecomment-951401558
 	export MallocNanoZone=0
 endif
+
+CMDS=client server
+
+build: $(CMDS:%=%.bin)
+	@# Help: Build binaries for client and server
+
+install: build
+	@echo ">>>> Installing client and server binaries to /tmp/runner/bin"
+	cp -r $(PWD)/bin $(RUNNER_HOME)
+	@echo "<<<< Done installing binaries!"
+	@# Help: Install client and server binaries
 
 format:
 	@echo ">>>> Formatting code..."
@@ -46,17 +58,38 @@ rootfs:
 	@echo "<<<< Done settings up root filesystem!"
 	@# Help: Set up root filesystem
 
+certs:
+	@echo ">>>> Generating certificates..."
+	mkdir -p $(RUNNER_HOME)/certs
+	cp -r resources/certs $(RUNNER_HOME)/
+	@echo "<<<< Done generating certificates!"
+	@# Help: Generate certificates
+
+$(CMDS:%=%.bin): %.bin: format lint protogen rootfs
+	@echo ">>>> Building $* binary..."
+	mkdir -p $(PWD)/bin
+	cd $(PWD)/cmd/$* && \
+		$(GOBUILD) -o $(PWD)/bin/$(*F)
+	@echo "<<<< Done building $* binary!"
+	@# Help: Build binary for $*
+
 clean:
 	@echo ">>>> Cleaning everything up..."
 	rm -rf $(RUNNER_HOME)
 	@echo "<<<< Done cleaning up!"
-	@# Help: Clean everythinggg
+	@# Help: Clean everything
 
-test: lint protogen rootfs
-	@echo ">>>> Testing $(PWD)..."
-	$(GOTEST)
+test: lint protogen rootfs certs install
+	@echo ">>>> Running tests in $(PWD)..."
+	$(GOTEST) ./...
 	@echo "<<<< Done testing!"
-	@# Help: Run all the unit tests
+	@# Help: Run all the tests
+
+integration.test: lint protogen rootfs certs install
+	@echo ">>>> Running integration tests..."
+	$(GOTEST) $(PWD)/integration
+	@echo "<<<< Done running integration tests!"
+	@# Help: Run integration tests
 
 coverage:
 	$(GOCOVER) -html=$(UT_COV)

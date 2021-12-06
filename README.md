@@ -22,27 +22,27 @@ functional and design aspects of Runner.
 
 ### Server
 
-* [ ] gRPC API to perform the following operations on a job
-    - [ ] Start
-    - [ ] Stop
-    - [ ] Query status
-    - [ ] Stream output
-* [ ] mTLS must be used for authentication between the client(s) and the server
-    - [ ] A strong set of cipher suits must be used
-* [ ] A simple authorization scheme is enough for the scope of this project
+* [x] gRPC API to perform the following operations on a job
+    - [x] Start
+    - [x] Stop
+    - [x] Query status
+    - [x] Stream output
+* [x] mTLS must be used for authentication between the client(s) and the server
+    - [x] A strong set of cipher suits must be used
+* [x] A simple authorization scheme is enough for the scope of this project
 
 ### Client
 
-* [ ] One or more clients should be able to perform the following operations on a job concurrently
-    - [ ] Start
-    - [ ] Stop
-    - [ ] Query status
-    - [ ] Stream output
+* [x] One or more clients should be able to perform the following operations on a job concurrently
+    - [x] Start
+    - [x] Stop
+    - [x] Query status
+    - [x] Stream output
 
 ### Misc
 
-* [ ] Build script to perform the following operations
-    - [ ] Build client and server binaries for Linux platform
+* [x] Build script to perform the following operations
+    - [x] Build client and server binaries for Linux platform
     - [x] Run tests on the entire codebase
     - [x] Generate code coverage report
 
