@@ -1,7 +1,10 @@
 package lib
 
 import (
+	"fmt"
 	"math/rand"
+	"os"
+	"strconv"
 	"sync"
 	"testing"
 	"time"
@@ -10,9 +13,13 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func init() {
+	Debug = true
+	RootFSSource = "/tmp/runner/rootfs"
+}
+
 // TestSimpleCommands tests running simple shell commands, their completion status and output
 func TestSimpleCommands(t *testing.T) {
-	Debug = true
 	testCases := []struct {
 		name     string    // name of the test case
 		command  string    // command to be tested
@@ -51,21 +58,12 @@ func TestSimpleCommands(t *testing.T) {
 		},
 		{
 			name:     "redirect to stderr",
-			command:  "echo foo >> /dev/stderr",
+			command:  "echo foo >&2",
 			nilErr:   true,
 			nilJob:   false,
 			status:   StatusCompleted,
 			exitCode: 0,
 			output:   "foo\n",
-		},
-		{
-			name:     "redirect to stdout",
-			command:  "echo bar >> /dev/stdout",
-			nilErr:   true,
-			nilJob:   false,
-			status:   StatusCompleted,
-			exitCode: 0,
-			output:   "bar\n",
 		},
 		{
 			name:     "failing command",
@@ -74,7 +72,7 @@ func TestSimpleCommands(t *testing.T) {
 			nilJob:   false,
 			status:   StatusCompleted,
 			exitCode: 1,
-			output:   "cat: invalid_file: No such file or directory\n",
+			output:   "cat: can't open 'invalid_file': No such file or directory\n",
 		},
 		{
 			name:    "blank command",
@@ -83,8 +81,8 @@ func TestSimpleCommands(t *testing.T) {
 			nilJob:  true,
 		},
 		{
-			name:     "background command",
-			command:  "echo foo && echo bar &",
+			name:     "command chain",
+			command:  "echo foo && echo bar",
 			nilErr:   true,
 			nilJob:   false,
 			status:   StatusCompleted,
@@ -106,7 +104,7 @@ func TestSimpleCommands(t *testing.T) {
 
 			if j != nil {
 				// let the job finish
-				time.Sleep(time.Second)
+				j.Wait()
 
 				// id
 				assert.NotEmpty(t, j.ID())
@@ -123,7 +121,6 @@ func TestSimpleCommands(t *testing.T) {
 
 // TestTimeout tests timeout expiration for jobs
 func TestTimeout(t *testing.T) {
-	Debug = true
 	testCases := []struct {
 		name    string        // test case name
 		command string        // command to run
@@ -163,7 +160,7 @@ func TestTimeout(t *testing.T) {
 			require.Nil(t, err)
 
 			// let the job time out
-			time.Sleep(tc.timeout + time.Second)
+			j.Wait()
 
 			// status
 			assertStatus(t, j, StatusTimedOut, -1)
@@ -176,7 +173,6 @@ func TestTimeout(t *testing.T) {
 
 // TestStop tests stopping a job
 func TestStop(t *testing.T) {
-	Debug = true
 	testCases := []struct {
 		name             string        // test case name
 		command          string        // command to run
@@ -191,7 +187,7 @@ func TestStop(t *testing.T) {
 		},
 		{
 			name:             "stop after 1s",
-			command:          "for i in $(seq 1 10); do echo iteration $i; sleep 1; done",
+			command:          "for i in $(seq 1 10); do echo iteration $i; sleep 2; done",
 			stopWaitDuration: time.Second,
 			output:           "iteration 1\n",
 		},
@@ -228,7 +224,6 @@ func TestStop(t *testing.T) {
 
 // TestConcurrentOutput tests streaming output from 1 job to multiple clients
 func TestConcurrentOutput(t *testing.T) {
-	Debug = true
 	testCases := []struct {
 		name       string // test case name
 		command    string // command to run
@@ -285,7 +280,6 @@ func TestConcurrentOutput(t *testing.T) {
 
 // TestOutputCancellation tests cancellation of output while multiple clients are consuming from out channels
 func TestOutputCancellation(t *testing.T) {
-	Debug = true
 	testCases := []struct {
 		name       string // test case name
 		command    string // command to run
@@ -345,7 +339,6 @@ func TestOutputCancellation(t *testing.T) {
 
 // TestStopDuringOutput tests stopping a job while multiple concurrent clients are consuming output
 func TestStopDuringOutput(t *testing.T) {
-	Debug = true
 	testCases := []struct {
 		name        string        // test case name
 		command     string        // command to run
@@ -397,7 +390,6 @@ func TestStopDuringOutput(t *testing.T) {
 
 // TestConcurrentStops tests the scenario where Stop() is called multiple times from concurrent goroutines
 func TestConcurrentStops(t *testing.T) {
-	Debug = true
 	testCases := []struct {
 		name     string // test case name
 		command  string // command to run
@@ -440,7 +432,6 @@ func TestConcurrentStops(t *testing.T) {
 
 // TestNoOutputCancellation tests cancellation of output when the job doesn't generate any output
 func TestNoOutputCancellation(t *testing.T) {
-	Debug = true
 	testCases := []struct {
 		name           string        // test case name
 		command        string        // command to run
@@ -491,7 +482,6 @@ func TestNoOutputCancellation(t *testing.T) {
 					}
 				}(i)
 			}
-
 			wg.Wait()
 
 			// Status
@@ -500,18 +490,218 @@ func TestNoOutputCancellation(t *testing.T) {
 	}
 }
 
-// assertOutput is a convenience function to stream and verify a job's output
+// TestPIDIsolation tests PID isolation for the job by running concurrent jobs that run "ps -ef" and
+// making sure that output is small and doesn't contain processes from the host
+func TestPIDIsolation(t *testing.T) {
+	Debug = true
+	testCases := []struct {
+		name    string // test case name
+		command string // command to run
+		numJobs int    // number of clients
+	}{
+		{
+			name:    "10 clients",
+			command: "ps -ef | wc -l",
+			numJobs: 10,
+		},
+	}
+	for _, tc := range testCases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			wg := sync.WaitGroup{}
+			wg.Add(tc.numJobs)
+			for i := 0; i < tc.numJobs; i++ {
+				go func() {
+					defer wg.Done()
+
+					c := JobConfig{
+						Command: tc.command,
+					}
+					j, err := StartJob(c)
+					require.NotNil(t, j)
+					require.Nil(t, err)
+
+					output := getOutput(t, j)
+					num, err := strconv.Atoi(output[:len(output)-1])
+					assert.Nil(t, err)
+					assert.LessOrEqual(t, num, 5)
+					j.Wait()
+
+					// Status
+					assertStatus(t, j, StatusCompleted, 0)
+				}()
+			}
+			wg.Wait()
+		})
+	}
+}
+
+// TestMountIsolation tests mount isolation for the job
+// Run concurrent clients that output text to same file and make sure that the file is contained
+// within the job's root filesystem
+func TestMountIsolation(t *testing.T) {
+	Debug = true
+	testCases := []struct {
+		name    string // test case name
+		command string // command to run
+		numJobs int    // number of clients
+		output  string // output
+	}{
+		{
+			name:    "10 clients",
+			command: "echo test for job %d >> /test.log && cat /test.log",
+			numJobs: 10,
+			output:  "test for job %d\n",
+		},
+	}
+	for _, tc := range testCases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			wg := sync.WaitGroup{}
+			wg.Add(tc.numJobs)
+			for i := 0; i < tc.numJobs; i++ {
+				go func(i int) {
+					defer wg.Done()
+
+					c := JobConfig{
+						Command: fmt.Sprintf(tc.command, i),
+					}
+					j, err := StartJob(c)
+					require.NotNil(t, j)
+					require.Nil(t, err)
+					j.Wait()
+					assertOutput(t, j, fmt.Sprintf(tc.output, i))
+
+					// Status
+					assertStatus(t, j, StatusCompleted, 0)
+				}(i)
+			}
+			wg.Wait()
+		})
+	}
+}
+
+// TestNetworkIsolation tests network isolation for a job
+// Run multiple concurrent clients that change the hostname to a specific value and verify that the
+// server's hostname is not affected
+func TestNetworkIsolation(t *testing.T) {
+	Debug = true
+	testCases := []struct {
+		name    string // test case name
+		command string // command to run
+		numJobs int    // number of clients
+		output  string
+	}{
+		{
+			name:    "10 clients",
+			command: "ip addr show | grep inet | wc -l",
+			numJobs: 10,
+			output:  "0\n",
+		},
+	}
+	for _, tc := range testCases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			wg := sync.WaitGroup{}
+			wg.Add(tc.numJobs)
+			for i := 0; i < tc.numJobs; i++ {
+				go func() {
+					defer wg.Done()
+
+					c := JobConfig{
+						Command: tc.command,
+					}
+					j, err := StartJob(c)
+					require.NotNil(t, j)
+					require.Nil(t, err)
+
+					assertOutput(t, j, tc.output)
+					j.Wait()
+
+					// Status
+					assertStatus(t, j, StatusCompleted, 0)
+				}()
+			}
+			wg.Wait()
+		})
+	}
+}
+
+func TestHostNameIsolation(t *testing.T) {
+	Debug = true
+	testCases := []struct {
+		name    string // test case name
+		command string // command to run
+		numJobs int    // number of clients
+		output  string // output
+	}{
+		{
+			name:    "10 clients",
+			command: "hostname job%d && hostname",
+			numJobs: 10,
+			output:  "job%d\n",
+		},
+	}
+	for _, tc := range testCases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			wg := sync.WaitGroup{}
+			wg.Add(tc.numJobs)
+			for i := 0; i < tc.numJobs; i++ {
+				go func(i int) {
+					defer wg.Done()
+
+					c := JobConfig{
+						Command: fmt.Sprintf(tc.command, i),
+					}
+					j, err := StartJob(c)
+					require.NotNil(t, j)
+					require.Nil(t, err)
+					j.Wait()
+					output := getOutput(t, j)
+					assertOutput(t, j, fmt.Sprintf(tc.output, i))
+
+					// Status
+					assertStatus(t, j, StatusCompleted, 0)
+
+					serverHostname, err := os.Hostname()
+					if err != nil {
+						t.Errorf("Unexpected error: %v", err)
+					}
+					jobHostname := output[:len(output)-1]
+					t.Logf("Hostnames - Server: %s, job: %s", serverHostname, jobHostname)
+					assert.NotEqual(t, serverHostname, jobHostname)
+				}(i)
+			}
+			wg.Wait()
+		})
+	}
+}
+
+// assertOutput is a convenience function to verify a job's output
 func assertOutput(t *testing.T, j Job, expected string) {
+	assert.Equal(t, expected, getOutput(t, j))
+}
+
+// getOutput is a convenience function to return a job's output
+func getOutput(t *testing.T, j Job) string {
 	out, cancel, err := j.Output()
 	require.Nil(t, err)
-
 	defer cancel()
 
 	output := make([]byte, 0)
 	for b := range out {
 		output = append(output, b.Bytes...)
 	}
-	assert.Equal(t, expected, string(output))
+	return string(output)
 }
 
 // assertStatus is a convenience function to verify a job's status

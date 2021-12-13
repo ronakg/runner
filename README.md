@@ -18,31 +18,31 @@ functional and design aspects of Runner.
     - [ ] CPU
     - [ ] Memory
     - [ ] Disk IO
-* [ ] Resource isolation for using PID, mount and networking namespaces
+* [x] Resource isolation for using PID, mount and networking namespaces
 
 ### Server
 
-* [ ] gRPC API to perform the following operations on a job
-    - [ ] Start
-    - [ ] Stop
-    - [ ] Query status
-    - [ ] Stream output
-* [ ] mTLS must be used for authentication between the client(s) and the server
-    - [ ] A strong set of cipher suits must be used
-* [ ] A simple authorization scheme is enough for the scope of this project
+* [x] gRPC API to perform the following operations on a job
+    - [x] Start
+    - [x] Stop
+    - [x] Query status
+    - [x] Stream output
+* [x] mTLS must be used for authentication between the client(s) and the server
+    - [x] A strong set of cipher suits must be used
+* [x] A simple authorization scheme is enough for the scope of this project
 
 ### Client
 
-* [ ] One or more clients should be able to perform the following operations on a job concurrently
-    - [ ] Start
-    - [ ] Stop
-    - [ ] Query status
-    - [ ] Stream output
+* [x] One or more clients should be able to perform the following operations on a job concurrently
+    - [x] Start
+    - [x] Stop
+    - [x] Query status
+    - [x] Stream output
 
 ### Misc
 
-* [ ] Build script to perform the following operations
-    - [ ] Build client and server binaries for Linux platform
+* [x] Build script to perform the following operations
+    - [x] Build client and server binaries for Linux platform
     - [x] Run tests on the entire codebase
     - [x] Generate code coverage report
 
@@ -122,6 +122,10 @@ type Job interface {
   // function can be used to stop streaming output from the job. Once cancel function is invoked,
   // the out channel is closed.
   Output() (out <-chan *Output, cancel func(), err error)
+
+  // Wait waits for the job to complete. Can be used to synchronously block till the job is
+  // finished.
+  Wait()
 }
 
 // StartJob creates and starts a new job according to supplied JobConfig
@@ -142,32 +146,29 @@ Some important considerations for the library:
 
 #### Job Execution
 
-- Start: An [exec Cmd with Context](https://pkg.go.dev/os/exec#CommandContext) is used to start a
-  job. The type of context used for the `Cmd` depends on the timeout supplied by the user. When the
-  timeout is set to a valid duration, a [Context with Timeout](https://pkg.go.dev/context#WithTimeout)
-  is used. When the timeout is set to 0 (which is same as no timeout), [Context with
-  Cancel](https://pkg.go.dev/context#WithCancel) is used.
+- Start: `reexec` is used to spawn the binary of the calling process again in a child process.
+  During the reexec phase, the library sets up the root filesystem and the control groups required for
+  isolation and resource limitation for the job. Once the setup is complete, user's command is
+  executed in its own child process in a controlled environment. The following diagram depicts the
+  process hierarchy.
 
-  The control groups defining resource limitation for the job are set up before the user's command
-  is executed.
-  This is achieved by running the command via a specialized binary called `container`. The container
-  takes the resource profile and the command to run as arguments. `container` sets up control groups
-  according to the profile parameters before spawning the command in a child process.
-
-  The following diagram explains how processes are spawned.
+  - `Start` starts 2 goroutines for job management. A goroutine to capture `stdout` and `stderr` of
+  the child process and redirect the output to the `outFile` of the job. And another goroutine that
+  monitors the job for completion as well as enforces the timeout supplied by the user.
 
 ```
 +---------+
 | server  |
 |    |    |     +------------+
-| library | --> | container  |
+| library | --> |   server   |
 +---------+     |     |      |
-                |  set up    |     +---------+
-                |  cgroups   | --> | command |
+                |  library   |     +---------+
+                |   reexec   | --> | command |
                 +------------+     +---------+
 ```
 
-- Stop: The `cancel` function of a job's context is used to stop the job.
+- Stop: When user invokes `Stop` for a job, the child process is killed using the Linux system call
+  Kill.
 
 #### Job Resource Limitation 
 
@@ -188,7 +189,8 @@ Example cgroup subsystem setup for a job with id `1234` -
 
 Library isolates each job by creating a separate namespace for PID, mount and network. This is
 achieved by setting `CLONE_NEWPID`, `CLONE_NEWNS` and `CLONE_NEWNET` clone flags during the job
-creation.
+creation. A new root filesystem is created for the job to make sure that it runs in a completely
+isolated environment.
 
 ### Server
 

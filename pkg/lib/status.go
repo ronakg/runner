@@ -7,6 +7,8 @@ type JobStatus int
 
 func (s JobStatus) String() string {
 	switch s {
+	case StatusCreated:
+		return "CREATED"
 	case StatusRunning:
 		return "RUNNING"
 	case StatusCompleted:
